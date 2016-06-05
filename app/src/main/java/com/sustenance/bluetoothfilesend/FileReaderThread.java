@@ -3,6 +3,9 @@ package com.sustenance.bluetoothfilesend;
 
 import android.util.Log;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -11,7 +14,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 
 public class FileReaderThread extends Thread {
-    protected static final int CHUNK_SIZE = 256 * 1024; //256kB
+    protected static final int CHUNK_SIZE = 128 * 1024; //128kB
 
     private String fileName;
     private long numChunks;
@@ -45,6 +48,20 @@ public class FileReaderThread extends Thread {
 
     public long getNumChunks() {
         return this.numChunks;
+    }
+
+    public JSONObject getMetadata() {
+        JSONObject metadata = new JSONObject();
+        if(this.file.canRead()) {
+            try {
+                metadata.put("name", this.getFileName());
+                metadata.put("length", this.getFileLength());
+                metadata.put("chunks", this.getNumChunks());
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+        return metadata;
     }
 
     public byte[] read(long chunk) {

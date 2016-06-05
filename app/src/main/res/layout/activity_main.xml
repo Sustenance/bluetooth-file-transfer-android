@@ -98,7 +98,7 @@
 
     <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="wrap_content"
         android:id="@+id/scrollView"
         android:layout_gravity="center_horizontal"
         android:padding="2dp"
@@ -112,7 +112,8 @@
             android:text="@string/waiting"
             android:id="@+id/textView_console"
             android:ellipsize="end"
-            android:enabled="true" />
+            android:enabled="true"
+            android:layout_gravity="bottom"/>
     </ScrollView>
 
 </LinearLayout>
