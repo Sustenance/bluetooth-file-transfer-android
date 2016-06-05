@@ -7,4 +7,6 @@
     <string name="file">File:</string>
     <string name="waiting">waiting...</string>
     <string name="send">Send</string>
+    <string name="service_name">BTFileTransfer</string>
+    <string name="bt_not_supported">Your device does not support Bluetooth</string>
 </resources>
