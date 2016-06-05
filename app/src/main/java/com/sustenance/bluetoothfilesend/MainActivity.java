@@ -42,6 +42,7 @@ public class MainActivity extends AppCompatActivity {
     private String filePath;
     protected AcceptThread mBTServer;
     protected ConnectedThread mBTClient;
+    protected FileReaderThread mFileReader;
     protected Handler mHandler;
     protected BluetoothAdapter mBluetoothAdapter;
     protected boolean isBluetoothEnabled;
@@ -120,14 +121,12 @@ public class MainActivity extends AppCompatActivity {
                             String status = receivedObj.getString("status");
                             switch (status) {
                                 case "PASS":
-                                    Log.d("PASS", receivedObj.getString("pass"));
+                                    //Log.d("PASS", receivedObj.getString("pass"));
                                     if(checkPassword(receivedObj.getString("pass"))){
                                         //send metadata
-                                        JSONObject metadata = new JSONObject();
-                                        metadata.put("name", "testFile.txt");
-                                        metadata.put("length", 10245);
-                                        metadata.put("chunks", 456);
-
+                                        manageFileReader();
+                                        JSONObject metadata = createMetadata();
+                                        Log.d("META", metadata.toString(1));
                                         byte[] content = (metadata.toString()).getBytes();
                                         mBTClient.write(content);
                                     }
@@ -147,6 +146,40 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         };
+    }
+
+    private JSONObject createMetadata() {
+        JSONObject metadata = new JSONObject();
+        try {
+            metadata.put("name", this.mFileReader.getFileName());
+            metadata.put("length", this.mFileReader.getFileLength());
+            metadata.put("chunks", this.mFileReader.getNumChunks());
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return metadata;
+    }
+
+    private boolean manageFileReader() {
+        if(this.isAuth) {
+            if(this.filePath != null){
+                FileReaderThread thread = new FileReaderThread(this.filePath);
+                if(thread.getNumChunks() > 0){
+                    this.mFileReader = thread;
+                    thread.start();
+                    return true;
+                } else {
+                    Log.d("No Chunks", "Tried to start fileReader but numChunks == 0");
+                    return false;
+                }
+            } else {
+                Log.d("No File", "Tried to start fileReader but not yet chosen file");
+                return false;
+            }
+        } else {
+            Log.d("Unauthorized", "Tried to start fileReader but not yet auth with client");
+            return false;
+        }
     }
 
     private boolean checkPassword(String pass) {
