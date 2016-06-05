@@ -2,13 +2,12 @@ package com.sustenance.bluetoothfilesend;
 
 
 import android.util.Log;
+import android.os.Handler;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -29,6 +28,9 @@ public class FileReaderThread extends Thread {
         try {
             this.fileLength = this.file.length();
             this.numChunks = this.fileLength / CHUNK_SIZE;
+            if(this.fileLength % CHUNK_SIZE != 0){
+                this.numChunks++;
+            }
         } catch(SecurityException e){
             Log.e("ACCESS DENIED", e.getMessage());
         }
