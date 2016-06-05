@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothServerSocket;
 import android.bluetooth.BluetoothSocket;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -21,6 +22,8 @@ import android.widget.Toast;
 
 import com.nbsp.materialfilepicker.MaterialFilePicker;
 import com.nbsp.materialfilepicker.ui.FilePickerActivity;
+
+import org.apache.commons.codec.android.binary.Hex;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -43,6 +46,7 @@ public class MainActivity extends AppCompatActivity {
     protected AcceptThread mBTServer;
     protected ConnectedThread mBTClient;
     protected FileReaderThread mFileReader;
+    protected ConsoleLoggerThread consoleLogger;
     protected Handler mHandler;
     protected BluetoothAdapter mBluetoothAdapter;
     protected boolean isBluetoothEnabled;
@@ -56,8 +60,13 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         this.context = this;
         filePath = "";
+        final TextView consoleTextView = (TextView) findViewById(R.id.textView_console);
+        if (consoleTextView != null) {
+            consoleLogger = new ConsoleLoggerThread(consoleTextView, "Starting...");
+            consoleLogger.start();
+        }
         Button fileButton = (Button) findViewById(R.id.button_select_file);
-        if(fileButton != null) {
+        if (fileButton != null) {
             fileButton.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -72,6 +81,7 @@ public class MainActivity extends AppCompatActivity {
                                 .withHiddenFiles(true)
                                 .start();
                     } else {
+                        consoleLogger.write("Requesting storage READ permission.");
                         ActivityCompat.requestPermissions(context,
                                 new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
                                 PERMISSIONS_REQUEST_READ_STORAGE);
@@ -80,26 +90,18 @@ public class MainActivity extends AppCompatActivity {
             });
         }
         int btPermissionCheck = ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH);
-        if(btPermissionCheck == PackageManager.PERMISSION_GRANTED){
+        if (btPermissionCheck == PackageManager.PERMISSION_GRANTED) {
             mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
             if (mBluetoothAdapter == null) {
+                consoleLogger.write("Device does not support Bluetooth.");
                 Toast.makeText(this, R.string.bt_not_supported, Toast.LENGTH_LONG).show();
-            }else{
+            } else {
                 Intent discoverableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
                 discoverableIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
                 startActivityForResult(discoverableIntent, REQUEST_ENABLE_BT);
-
-//                isBluetoothEnabled = mBluetoothAdapter.isEnabled();
-//                if (!isBluetoothEnabled) {
-//                    Intent discoverableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
-//                    discoverableIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
-//                    startActivityForResult(discoverableIntent, REQUEST_ENABLE_BT);
-//                }else {
-//                    mBTServer = new AcceptThread();
-//                    mBTServer.start();
-//                }
             }
         } else {
+            consoleLogger.write("Requesting Bluetooth permission.");
             ActivityCompat.requestPermissions(context,
                     new String[]{Manifest.permission.BLUETOOTH},
                     PERMISSIONS_REQUEST_BLUETOOTH);
@@ -108,13 +110,11 @@ public class MainActivity extends AppCompatActivity {
         mHandler = new Handler(Looper.getMainLooper()) {
             @Override
             public void handleMessage(Message message) {
-                if(message.what==CONNECTED){
-                    Toast.makeText(context, message.obj.toString(), Toast.LENGTH_LONG).show();
-                    //connectedTextView.setText(message.obj.toString());
-                    //receiveData();
-                }else if(message.what==MESSAGE_READ){
-                    if(mBTClient.isAlive()){
-                        byte[] received = (byte[])message.obj;
+                if (message.what == CONNECTED) {
+                    consoleLogger.write("Connected to: " + message.obj.toString());
+                } else if (message.what == MESSAGE_READ) {
+                    if (mBTClient.isAlive()) {
+                        byte[] received = (byte[]) message.obj;
                         String receivedString = new String(received);
                         try {
                             JSONObject receivedObj = new JSONObject(receivedString);
@@ -122,9 +122,7 @@ public class MainActivity extends AppCompatActivity {
                             switch (status) {
                                 case "PASS":
                                     //Log.d("PASS", receivedObj.getString("pass"));
-                                    if(checkPassword(receivedObj.getString("pass"))){
-                                        //send metadata
-                                        manageFileReader();
+                                    if (checkPassword(receivedObj.getString("pass"))) {
                                         JSONObject metadata = createMetadata();
                                         Log.d("META", metadata.toString(1));
                                         byte[] content = (metadata.toString()).getBytes();
@@ -132,7 +130,18 @@ public class MainActivity extends AppCompatActivity {
                                     }
                                     break;
                                 case "READY":
-                                    //send chunk
+                                    try{
+                                        long chunkNum = Long.parseLong(receivedObj.getString("lastChunk"));
+                                        chunkNum++;
+                                        byte[] chunk = mFileReader.read(chunkNum);
+                                        JSONObject packet = new JSONObject();
+                                        packet.put("chunk", Long.toString(chunkNum));
+                                        packet.put("payload", Hex.encodeHexString(chunk));
+                                        Log.d("Packet", packet.toString(1));
+                                        consoleLogger.write("Sending chunk #" + chunkNum);
+                                        mBTClient.write(packet.toString().getBytes());
+                                    }catch (NumberFormatException e){
+                                    }
                                     break;
                                 case "RESEND":
                                     //resend requested chunk
@@ -149,11 +158,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private JSONObject createMetadata() {
-        JSONObject metadata = new JSONObject();
+        JSONObject metadata = this.mFileReader.getMetadata();
         try {
-            metadata.put("name", this.mFileReader.getFileName());
-            metadata.put("length", this.mFileReader.getFileLength());
-            metadata.put("chunks", this.mFileReader.getNumChunks());
+            consoleLogger.write(metadata.toString(1));
         } catch (JSONException e) {
             e.printStackTrace();
         }
@@ -161,37 +168,36 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean manageFileReader() {
-        if(this.isAuth) {
-            if(this.filePath != null){
-                FileReaderThread thread = new FileReaderThread(this.filePath);
-                if(thread.getNumChunks() > 0){
-                    this.mFileReader = thread;
-                    thread.start();
-                    return true;
-                } else {
-                    Log.d("No Chunks", "Tried to start fileReader but numChunks == 0");
-                    return false;
-                }
+        if (this.filePath != null) {
+            FileReaderThread thread = new FileReaderThread(this.filePath);
+            if (thread.getNumChunks() > 0) {
+                consoleLogger.write("Starting file reader thread.");
+                this.mFileReader = thread;
+                thread.start();
+                return true;
             } else {
-                Log.d("No File", "Tried to start fileReader but not yet chosen file");
+                Log.d("No Chunks", "Tried to start fileReader but numChunks == 0");
                 return false;
             }
         } else {
-            Log.d("Unauthorized", "Tried to start fileReader but not yet auth with client");
+            Log.d("No File", "Tried to start fileReader but not yet chosen file");
             return false;
         }
     }
 
     private boolean checkPassword(String pass) {
+        consoleLogger.write("Authenticated with client.");
         this.isAuth = pass.equals(this.pass);
+        this.refreshUI();
         return this.isAuth;
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
-        switch(requestCode) {
+        switch (requestCode) {
             case PERMISSIONS_REQUEST_READ_STORAGE: {
-                if(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    consoleLogger.write("Permission granted to READ storage.");
                     new MaterialFilePicker()
                             .withActivity(context)
                             .withFilter(Pattern.compile(".*$"))
@@ -200,15 +206,18 @@ public class MainActivity extends AppCompatActivity {
                             .withFilterDirectories(false)
                             .withHiddenFiles(true)
                             .start();
-                }else {
+                } else {
+                    consoleLogger.write("Permission denied to READ storage.");
                     Toast.makeText(this, "Must allow access to storage!", Toast.LENGTH_LONG).show();
                 }
                 return;
             }
             case PERMISSIONS_REQUEST_BLUETOOTH: {
-                if(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    consoleLogger.write("Permission granted to Bluetooth.");
                     mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
                 } else {
+                    consoleLogger.write("Permission denied to Bluetooth.");
                     Toast.makeText(this, "Must allow access to Bluetooth!", Toast.LENGTH_LONG).show();
                     this.finish();
                 }
@@ -217,20 +226,23 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    protected void onActivityResult (int requestCode, int resultCode, Intent data) {
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if(requestCode == FILE_CODE && resultCode == AppCompatActivity.RESULT_OK) {
+        if (requestCode == FILE_CODE && resultCode == AppCompatActivity.RESULT_OK) {
             String filePath = data.getStringExtra(FilePickerActivity.RESULT_FILE_PATH);
-            if(filePath != null) {
+            if (filePath != null) {
+                consoleLogger.write("Selected file: " + filePath);
                 this.filePath = filePath;
+                manageFileReader();
             }
-        } else if(requestCode == REQUEST_ENABLE_BT){
-            if (resultCode != AppCompatActivity.RESULT_CANCELED){
+        } else if (requestCode == REQUEST_ENABLE_BT) {
+            if (resultCode != AppCompatActivity.RESULT_CANCELED) {
+                consoleLogger.write("Waiting for connection...");
                 isBluetoothEnabled = true;
                 mBTServer = new AcceptThread();
                 mBTServer.start();
                 Toast.makeText(this, "Bluetooth Enabled", Toast.LENGTH_SHORT).show();
-            }else{
+            } else {
                 isBluetoothEnabled = false;
                 Toast.makeText(this, "Bluetooth Disabled", Toast.LENGTH_SHORT).show();
             }
@@ -239,7 +251,7 @@ public class MainActivity extends AppCompatActivity {
         this.refreshUI();
     }
 
-    protected boolean askForBluetooth(){
+    protected boolean askForBluetooth() {
         Log.e("BT Off", "Asking for Bluetooth enabled");
         Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
         startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
@@ -248,15 +260,17 @@ public class MainActivity extends AppCompatActivity {
 
     private void refreshUI() {
         TextView filePathView = (TextView) findViewById(R.id.textView_file_selected);
-        if(filePathView != null) {
+        if (filePathView != null) {
             filePathView.setText(this.filePath);
+        }
+        Button sendButton = (Button) findViewById(R.id.button_send);
+        if (sendButton != null && this.isAuth) {
+            sendButton.setTextColor(Color.GREEN);
         }
     }
 
 
-
-
-    protected boolean manageConnectedSocket(BluetoothSocket socket){
+    protected boolean manageConnectedSocket(BluetoothSocket socket) {
         this.isAuth = false;
         ConnectedThread thread = new ConnectedThread(socket);
         thread.start();
@@ -278,7 +292,8 @@ public class MainActivity extends AppCompatActivity {
                 // MY_UUID is the app's UUID string, also used by the client code
                 tmp = mBluetoothAdapter.listenUsingRfcommWithServiceRecord(getString(R.string.service_name),
                         UUID.fromString("00001101-0000-1000-8000-00805f9b34fb"));
-            } catch (IOException e) { }
+            } catch (IOException e) {
+            }
             mmServerSocket = tmp;
         }
 
@@ -301,14 +316,16 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        /** Will cancel the listening socket, and cause the thread to finish */
+        /**
+         * Will cancel the listening socket, and cause the thread to finish
+         */
         public void cancel() {
             try {
                 mmServerSocket.close();
-            } catch (IOException e) { }
+            } catch (IOException e) {
+            }
         }
     }
-
 
 
     private class ConnectedThread extends Thread {
@@ -332,7 +349,8 @@ public class MainActivity extends AppCompatActivity {
                 }
                 */
                 mBTClient = this;
-            } catch (IOException e) { }
+            } catch (IOException e) {
+            }
 
             mmInStream = tmpIn;
             mmOutStream = tmpOut;
@@ -378,7 +396,35 @@ public class MainActivity extends AppCompatActivity {
         public void cancel() {
             try {
                 mmSocket.close();
-            } catch (IOException e) { }
+            } catch (IOException e) {
+            }
+        }
+    }
+
+    public class ConsoleLoggerThread extends Thread {
+        private String content;
+        private TextView textView;
+
+        public ConsoleLoggerThread(TextView textView) {
+            this(textView, "");
+        }
+
+        public ConsoleLoggerThread(TextView textView, String content) {
+            this.textView = textView;
+            this.content = content;
+        }
+
+        public void run() {
+            textView.setText(this.content);
+        }
+
+        public void write(String textContent) {
+            this.content += "\n" + textContent;
+            textView.setText(this.content);
+        }
+
+        public void cancel() {
+            interrupt();
         }
     }
 
