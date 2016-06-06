@@ -24,6 +24,7 @@ import com.nbsp.materialfilepicker.MaterialFilePicker;
 import com.nbsp.materialfilepicker.ui.FilePickerActivity;
 
 import org.apache.commons.codec.android.binary.Hex;
+import org.apache.commons.codec.android.digest.DigestUtils;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -133,18 +134,14 @@ public class MainActivity extends AppCompatActivity {
                                     try{
                                         long chunkNum = Long.parseLong(receivedObj.getString("lastChunk"));
                                         chunkNum++;
-                                        byte[] chunk = mFileReader.read(chunkNum);
-                                        JSONObject packet = new JSONObject();
-                                        packet.put("chunk", Long.toString(chunkNum));
-                                        packet.put("payload", Hex.encodeHexString(chunk));
-                                        Log.d("Packet", packet.toString(1));
-                                        consoleLogger.write("Sending chunk #" + chunkNum);
-                                        mBTClient.write(packet.toString().getBytes());
+                                        sendPacket(chunkNum);
                                     }catch (NumberFormatException e){
                                     }
                                     break;
                                 case "RESEND":
                                     //resend requested chunk
+                                    long chunkNum = Long.parseLong(receivedObj.getString("lastChunk"));
+                                    sendPacket(chunkNum);
                                     break;
 
                             }
@@ -155,6 +152,24 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         };
+    }
+
+    private void sendPacket(long chunkNum) {
+        byte[] chunk = mFileReader.read(chunkNum);
+        String chunkHexString = Hex.encodeHexString(chunk);
+        String md5Hash = DigestUtils.md5Hex(chunkHexString);
+        JSONObject packet = new JSONObject();
+        Log.d("Hash", md5Hash);
+        try {
+            packet.put("chunk", Long.toString(chunkNum));
+            packet.put("payload", chunkHexString);
+            packet.put("hash", md5Hash);
+            //Log.d("Packet", packet.toString(1));
+            consoleLogger.write("Sending chunk #" + chunkNum);
+            mBTClient.write(packet.toString().getBytes());
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
     }
 
     private JSONObject createMetadata() {
@@ -170,15 +185,10 @@ public class MainActivity extends AppCompatActivity {
     private boolean manageFileReader() {
         if (this.filePath != null) {
             FileReaderThread thread = new FileReaderThread(this.filePath);
-            if (thread.getNumChunks() > 0) {
-                consoleLogger.write("Starting file reader thread.");
-                this.mFileReader = thread;
-                thread.start();
-                return true;
-            } else {
-                Log.d("No Chunks", "Tried to start fileReader but numChunks == 0");
-                return false;
-            }
+            consoleLogger.write("Starting file reader thread.");
+            this.mFileReader = thread;
+            thread.start();
+            return true;
         } else {
             Log.d("No File", "Tried to start fileReader but not yet chosen file");
             return false;
