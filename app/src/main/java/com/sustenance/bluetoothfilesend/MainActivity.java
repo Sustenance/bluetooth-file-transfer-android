@@ -53,6 +53,7 @@ public class MainActivity extends AppCompatActivity {
     protected ConsoleLoggerThread consoleLogger;
     protected Handler mHandler;
     protected BluetoothAdapter mBluetoothAdapter;
+    protected PasswordManager mPasswordManager;
     protected boolean isBluetoothEnabled;
     protected String pass = "This is content";
     protected boolean isAuth;
@@ -69,6 +70,7 @@ public class MainActivity extends AppCompatActivity {
         this.context = this;
         this.mStartTime = 0;
         this.isClientReady = false;
+        this.mPasswordManager = new PasswordManager(this);
         filePath = "";
         final TextView consoleTextView = (TextView) findViewById(R.id.textView_console);
         if (consoleTextView != null) {
@@ -247,9 +249,15 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private boolean checkPassword(String pass) {
-        consoleLogger.write("Authenticated with client.");
-        this.isAuth = pass.equals(this.pass);
+    private boolean checkPassword(String receivedHash) {
+        String pwHash = this.mPasswordManager.getExistingHash();
+        if(receivedHash.equals(pwHash)){
+            consoleLogger.write("Authenticated with client.");
+            this.isAuth = true;
+        }else {
+            consoleLogger.write("Received incorrect password.");
+            this.isAuth = false;
+        }
         this.refreshUI();
         return this.isAuth;
     }
@@ -353,7 +361,8 @@ public class MainActivity extends AppCompatActivity {
         this.isAuth = false;
         ConnectedThread thread = new ConnectedThread(socket);
         thread.start();
-        byte[] content = ("This is content").getBytes();
+        String pwHash = this.mPasswordManager.getExistingHash();
+        byte[] content = pwHash.getBytes();
         thread.write(content);
 
         //Create ConnectedThread and run it
