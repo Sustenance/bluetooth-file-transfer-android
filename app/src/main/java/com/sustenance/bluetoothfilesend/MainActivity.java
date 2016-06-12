@@ -32,7 +32,10 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.text.NumberFormat;
+import java.util.Date;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 public class MainActivity extends AppCompatActivity {
@@ -53,6 +56,10 @@ public class MainActivity extends AppCompatActivity {
     protected boolean isBluetoothEnabled;
     protected String pass = "This is content";
     protected boolean isAuth;
+    protected boolean isClientReady;
+    protected long mNumChunks;
+    protected long mStartTime;
+
 
 
     @Override
@@ -60,6 +67,8 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         this.context = this;
+        this.mStartTime = 0;
+        this.isClientReady = false;
         filePath = "";
         final TextView consoleTextView = (TextView) findViewById(R.id.textView_console);
         if (consoleTextView != null) {
@@ -86,6 +95,23 @@ public class MainActivity extends AppCompatActivity {
                         ActivityCompat.requestPermissions(context,
                                 new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
                                 PERMISSIONS_REQUEST_READ_STORAGE);
+                    }
+                }
+            });
+        }
+        Button sendButton = (Button) findViewById(R.id.button_send);
+        if(sendButton != null) {
+            sendButton.setOnClickListener(new View.OnClickListener() {
+
+                @Override
+                public void onClick(View v) {
+                    if(isAuth && isClientReady){
+                        if(mStartTime == 0){
+                            mStartTime = new Date().getTime();
+                        }
+                        isClientReady = false;
+                        refreshUI();
+                        sendPacket(0);
                     }
                 }
             });
@@ -122,8 +148,9 @@ public class MainActivity extends AppCompatActivity {
                             String status = receivedObj.getString("status");
                             switch (status) {
                                 case "PASS":
+                                    checkPassword(receivedObj.getString("pass"));
                                     //Log.d("PASS", receivedObj.getString("pass"));
-                                    if (checkPassword(receivedObj.getString("pass"))) {
+                                    if (isAuth && mFileReader != null && mFileReader.isReady()) {
                                         JSONObject metadata = createMetadata();
                                         Log.d("META", metadata.toString(1));
                                         byte[] content = (metadata.toString()).getBytes();
@@ -133,8 +160,14 @@ public class MainActivity extends AppCompatActivity {
                                 case "READY":
                                     try{
                                         long chunkNum = Long.parseLong(receivedObj.getString("lastChunk"));
-                                        chunkNum++;
-                                        sendPacket(chunkNum);
+                                        if(chunkNum == -1){ //is the first READY status, no chunks sent yet
+                                            isClientReady = true;
+                                            consoleLogger.write("Client ready to receive");
+                                            refreshUI();
+                                        } else {
+                                            chunkNum++;
+                                            sendPacket(chunkNum);
+                                        }
                                     }catch (NumberFormatException e){
                                     }
                                     break;
@@ -143,7 +176,18 @@ public class MainActivity extends AppCompatActivity {
                                     long chunkNum = Long.parseLong(receivedObj.getString("lastChunk"));
                                     sendPacket(chunkNum);
                                     break;
-
+                                case "FINISHED":
+                                    long endTime = new Date().getTime();
+                                    consoleLogger.write("Finished file transfer in " +
+                                            TimeUnit.MILLISECONDS.toMinutes(endTime-mStartTime) + "min, " +
+                                            (TimeUnit.MILLISECONDS.toSeconds(endTime-mStartTime) -
+                                            TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(endTime-mStartTime))) +
+                                            "sec");
+                                    mStartTime = 0;
+                                    mBTClient.cancel();
+                                    consoleLogger.write("Waiting for connection...");
+                                    mBTServer = new AcceptThread();
+                                    mBTServer.start();
                             }
                         } catch (JSONException e) {
                             e.printStackTrace();
@@ -159,13 +203,17 @@ public class MainActivity extends AppCompatActivity {
         String chunkHexString = Hex.encodeHexString(chunk);
         String md5Hash = DigestUtils.md5Hex(chunkHexString);
         JSONObject packet = new JSONObject();
-        Log.d("Hash", md5Hash);
         try {
             packet.put("chunk", Long.toString(chunkNum));
             packet.put("payload", chunkHexString);
             packet.put("hash", md5Hash);
             //Log.d("Packet", packet.toString(1));
-            consoleLogger.write("Sending chunk #" + chunkNum);
+            if(mNumChunks != 0){
+                NumberFormat nf = NumberFormat.getPercentInstance();
+                consoleLogger.write("Sending " + nf.format((double)chunkNum / mNumChunks));
+            }else {
+                consoleLogger.write("Sending chunk #" + chunkNum);
+            }
             mBTClient.write(packet.toString().getBytes());
         } catch (JSONException e) {
             e.printStackTrace();
@@ -175,7 +223,8 @@ public class MainActivity extends AppCompatActivity {
     private JSONObject createMetadata() {
         JSONObject metadata = this.mFileReader.getMetadata();
         try {
-            consoleLogger.write(metadata.toString(1));
+            this.mNumChunks = metadata.getInt("chunks");
+            consoleLogger.write("File is " + metadata.getString("length") + " bytes");
         } catch (JSONException e) {
             e.printStackTrace();
         }
@@ -186,8 +235,11 @@ public class MainActivity extends AppCompatActivity {
         if (this.filePath != null) {
             FileReaderThread thread = new FileReaderThread(this.filePath);
             consoleLogger.write("Starting file reader thread.");
-            this.mFileReader = thread;
             thread.start();
+            while(!thread.isReady()){
+                Log.d("FILE", "not yet ready");
+            }
+            this.mFileReader = thread;
             return true;
         } else {
             Log.d("No File", "Tried to start fileReader but not yet chosen file");
@@ -244,6 +296,18 @@ public class MainActivity extends AppCompatActivity {
                 consoleLogger.write("Selected file: " + filePath);
                 this.filePath = filePath;
                 manageFileReader();
+                if(isAuth && mFileReader != null && mFileReader.isReady()) {
+                    JSONObject metadata = createMetadata();
+                    try {
+                        Log.d("META", metadata.toString(1));
+                        byte[] content = (metadata.toString()).getBytes();
+                        mBTClient.write(content);
+                    } catch (JSONException e) {
+                        e.printStackTrace();
+                    }
+                } else {
+                    Log.e("FILE", "not ready");
+                }
             }
         } else if (requestCode == REQUEST_ENABLE_BT) {
             if (resultCode != AppCompatActivity.RESULT_CANCELED) {
@@ -274,8 +338,13 @@ public class MainActivity extends AppCompatActivity {
             filePathView.setText(this.filePath);
         }
         Button sendButton = (Button) findViewById(R.id.button_send);
-        if (sendButton != null && this.isAuth) {
+        if (sendButton != null && this.isAuth && this.isClientReady && this.mFileReader != null &&
+                this.mFileReader.isReady()) {
             sendButton.setTextColor(Color.GREEN);
+            sendButton.setEnabled(true);
+        } else if (sendButton != null){
+            sendButton.setEnabled(false);
+            sendButton.setTextColor(Color.RED);
         }
     }
 
