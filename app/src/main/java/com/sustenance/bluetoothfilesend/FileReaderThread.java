@@ -52,6 +52,10 @@ public class FileReaderThread extends Thread {
         return this.numChunks;
     }
 
+    public boolean isReady() {
+        return (this.fileStream != null);
+    }
+
     public JSONObject getMetadata() {
         JSONObject metadata = new JSONObject();
         if(this.file.canRead()) {
@@ -79,7 +83,6 @@ public class FileReaderThread extends Thread {
 
     public void run() {
         try {
-            this.file = new File(this.fileName);
             fileStream = new RandomAccessFile(this.file, "r");
         } catch (FileNotFoundException e) {
             Log.e("File not found", e.getMessage());
