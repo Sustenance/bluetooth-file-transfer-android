@@ -17,6 +17,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -60,7 +61,7 @@ public class MainActivity extends AppCompatActivity {
     protected boolean isClientReady;
     protected long mNumChunks;
     protected long mStartTime;
-
+    protected String lastReceivedPass;
 
 
     @Override
@@ -70,6 +71,7 @@ public class MainActivity extends AppCompatActivity {
         this.context = this;
         this.mStartTime = 0;
         this.isClientReady = false;
+        this.lastReceivedPass = "";
         this.mPasswordManager = new PasswordManager(this);
         filePath = "";
         final TextView consoleTextView = (TextView) findViewById(R.id.textView_console);
@@ -97,6 +99,36 @@ public class MainActivity extends AppCompatActivity {
                         ActivityCompat.requestPermissions(context,
                                 new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
                                 PERMISSIONS_REQUEST_READ_STORAGE);
+                    }
+                }
+            });
+        }
+        Button savePasswordButton = (Button) findViewById(R.id.button_save_password);
+        if(savePasswordButton != null) {
+            savePasswordButton.setWidth(fileButton!=null ? fileButton.getWidth() : savePasswordButton.getWidth());
+            savePasswordButton.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    String password = "";
+                    EditText passwordField = (EditText) findViewById(R.id.editText_password);
+                    if(passwordField!=null) {
+                        password = passwordField.getText().toString();
+                    }
+                    if(password.equals("")){
+                        mPasswordManager.clearPassword();
+                    }else{
+                        mPasswordManager.setNewPassword(password);
+                    }
+                    if(mBTServer != null && mBTServer.isAlive()){
+                        mBTServer.cancel();
+                        isAuth = false;
+                        isClientReady = false;
+                        consoleLogger.write("Waiting for connection...");
+                        mBTServer = new AcceptThread();
+                        mBTServer.start();
+                    }
+                    if(mBTClient != null && mBTClient.isAlive()){
+                        mBTClient.cancel();
                     }
                 }
             });
@@ -250,6 +282,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean checkPassword(String receivedHash) {
+        this.lastReceivedPass = receivedHash;
         String pwHash = this.mPasswordManager.getExistingHash();
         if(receivedHash.equals(pwHash)){
             consoleLogger.write("Authenticated with client.");

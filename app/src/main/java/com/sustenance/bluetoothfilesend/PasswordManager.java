@@ -26,7 +26,14 @@ public class PasswordManager {
         SharedPreferences.Editor editor = mPrefs.edit();
         editor.putString(PWHASH, hash);
         editor.commit();
-        return false;
+        return true;
+    }
+
+    public boolean clearPassword() {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putString(PWHASH, "");
+        editor.commit();
+        return true;
     }
 
     public static String getHashFromPassword(String password) {
