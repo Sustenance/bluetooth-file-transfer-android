@@ -39,13 +39,12 @@
             android:layout_weight="2"
             android:text="@string/password" />
 
-        <CheckBox
+        <Button
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/unmask"
-            android:id="@+id/checkbox_unmask"
-            android:layout_weight="1"
-            android:checked="false" />
+            android:text="Save"
+            android:id="@+id/button_save_password"
+            android:layout_weight="2" />
 
     </LinearLayout>
 
